@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <title>G1 Notícias - Últimas</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Arial, Helvetica, sans-serif;
+        }
+        
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            background: #000;
+            color: #fff;
+            overflow: hidden;
+        }
+        
+        #feed {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background-size: cover;
+            background-position: center;
+            transition: background-image 0.8s ease-in-out, opacity 0.4s ease-in-out;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+        }
+        
+        .logo {
+            position: absolute;
+            top: 20px;
+            right: 25px;
+            width: 130px;
+            z-index: 16;
+            filter: drop-shadow(0 0 6px rgba(0, 0, 0, .8));
+        }
+        
+        .overlay {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            background: rgba(0, 0, 0, .75);
+            padding: 60px 70px 50px;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            z-index: 10;
+            overflow: hidden;
+            backdrop-filter: blur(2px);
+        }
+        
+        .title-bar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 12px;
+            background: linear-gradient(90deg, #c4170c, #e53935);
+            z-index: 11;
+            box-shadow: 0 -2px 8px rgba(0, 0, 0, .4);
+        }
+        
+        .title {
+            font-size: 2em;
+            font-weight: bold;
+            text-shadow: 0 0 15px rgba(0, 0, 0, .8);
+            margin-bottom: 15px;
+            padding: 0 20px;
+        }
+        
+        .description {
+            font-size: 1.2em;
+            line-height: 1.6;
+            padding: 0 20px;
+            word-break: break-word;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        @media(max-width:768px) {
+            .title {
+                font-size: 1.5em
+            }
+            .description {
+                font-size: 1em;
+                padding: 0 12px
+            }
+            .overlay {
+                padding: 20px
+            }
+            .logo {
+                width: 100px;
+                top: 15px;
+                right: 15px
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="feed">
+        <img class="logo" src="https://s2-g1.glbimg.com/9yYCBhtSsy23W0pNwYgEil7i_eM=/144x0/http://i.s3.glbimg.com/v1/AUTH_afd7a7aa13da4265ba6d93a18f8aa19e/pox/g1.png" alt="G1 Logo">
+        <div class="overlay">
+            <div class="title-bar"></div>
+            <div class="title" id="title"></div>
+            <div class="description" id="description"></div>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            var FEED_URL = "https://g1.globo.com/dynamo/brasil/rss2.xml";
+            var PROXY = "https://api.allorigins.win/raw?url=";
+            var PLACEHOLDER = "https://via.placeholder.com/1920x1080?text=Notícia+sem+imagem";
+
+            var feedEl = document.getElementById("feed");
+            var titleEl = document.getElementById("title");
+            var descEl = document.getElementById("description");
+
+            function cleanText(s) {
+                if (!s) return "";
+                try {
+                    var t = s.replace(/<[^>]*>/g, "");
+                    var ta = document.createElement("textarea");
+                    ta.innerHTML = t;
+                    return (ta.value || "").trim();
+                } catch (e) {
+                    return String(s).trim();
+                }
+            }
+
+            function extractImageFromItem(item) {
+                try {
+                    var media = item.getElementsByTagName("media:content")[0] || item.getElementsByTagName("content")[0];
+                    if (media && media.getAttribute && media.getAttribute("url")) {
+                        return media.getAttribute("url");
+                    }
+                    var enclosure = item.getElementsByTagName("enclosure")[0];
+                    if (enclosure && enclosure.getAttribute && enclosure.getAttribute("url")) {
+                        return enclosure.getAttribute("url");
+                    }
+                    var descEl = item.getElementsByTagName("description")[0];
+                    var desc = descEl && descEl.textContent ? descEl.textContent : (descEl && descEl.text ? descEl.text : "");
+                    if (desc) {
+                        var m = desc.match(/https?:\/\/[^"'<> ]+\.(jpg|jpeg|png|gif)(\?[^ "'<>]*)?/i);
+                        if (m) return m[0];
+                    }
+                } catch (e) {
+                    return null;
+                }
+                return null;
+            }
+
+            function parseFeedXml(xmlText) {
+                var parser = new DOMParser();
+                var doc = parser.parseFromString(xmlText, "application/xml");
+                var items = doc.getElementsByTagName("item");
+                var arr = [];
+                for (var i = 0; i < items.length; i++) {
+                    var it = items[i];
+                    var tEl = it.getElementsByTagName("title")[0];
+                    var dEl = it.getElementsByTagName("description")[0];
+                    var title = tEl && tEl.textContent ? cleanText(tEl.textContent) : "";
+                    var desc = dEl && dEl.textContent ? cleanText(dEl.textContent) : "";
+                    var image = extractImageFromItem(it);
+                    if (image && /^https?:\/\//i.test(image)) {
+                        arr.push({
+                            title: title,
+                            description: desc,
+                            image: image
+                        });
+                    }
+                }
+                return arr;
+            }
+
+            function xhrGet(url, cb) {
+                try {
+                    var xhr = new XMLHttpRequest();
+                    xhr.open("GET", url, true);
+                    xhr.onreadystatechange = function() {
+                        if (xhr.readyState === 4) {
+                            if (xhr.status >= 200 && xhr.status < 300) {
+                                cb(null, xhr.responseText);
+                            } else {
+                                cb(new Error("XHR status " + xhr.status));
+                            }
+                        }
+                    };
+                    xhr.send();
+                } catch (e) {
+                    cb(e);
+                }
+            }
+
+            function preloadImage(url, cb) {
+                var img = new Image();
+                var done = false;
+                var timer = setTimeout(function() {
+                    if (!done) {
+                        done = true;
+                        cb(false);
+                    }
+                }, 5000);
+                img.onload = function() {
+                    if (!done) {
+                        done = true;
+                        clearTimeout(timer);
+                        cb(true);
+                    }
+                };
+                img.onerror = function() {
+                    if (!done) {
+                        done = true;
+                        clearTimeout(timer);
+                        cb(false);
+                    }
+                };
+                img.src = url;
+            }
+
+            function show(item) {
+                try {
+                    feedEl.style.opacity = "0.6";
+                    setTimeout(function() {
+                        feedEl.style.backgroundImage = "url('" + (item.image || PLACEHOLDER) + "')";
+                        titleEl.textContent = item.title || "";
+                        descEl.textContent = item.description || "";
+                        feedEl.style.opacity = "1";
+                    }, 150);
+                } catch (e) {
+                    feedEl.style.backgroundImage = "url('" + PLACEHOLDER + "')";
+                    titleEl.textContent = item.title || "";
+                    descEl.textContent = item.description || "";
+                }
+            }
+
+
+
+            // ---- Lógica principal ----
+            xhrGet(PROXY + encodeURIComponent(FEED_URL), function(err, xmlText) {
+                if (err || !xmlText) {
+                    titleEl.textContent = "Nenhuma notícia disponível";
+                    descEl.textContent = "Erro ao carregar notícias.";
+                    feedEl.style.backgroundImage = "url('" + PLACEHOLDER + "')";
+                    return;
+                }
+
+                var news = parseFeedXml(xmlText);
+                if (!news || news.length === 0) {
+                    titleEl.textContent = "Nenhuma notícia com imagem encontrada";
+                    descEl.textContent = "Tente novamente mais tarde.";
+                    feedEl.style.backgroundImage = "url('" + PLACEHOLDER + "')";
+                    return;
+                }
+
+                // Recupera último índice exibido do armazenamento local
+                var lastIndex = parseInt(localStorage.getItem("lastNewsIndex") || "0", 10);
+                var idx = (lastIndex + 1) % news.length; // próxima notícia
+
+                // Exibe e salva o índice atual
+                preloadImage(news[idx].image, function(ok) {
+                    show(ok ? news[idx] : {
+                        title: news[idx].title,
+                        description: news[idx].description,
+                        image: PLACEHOLDER
+                    });
+                    localStorage.setItem("lastNewsIndex", idx);
+                });
+            });
+
+        })();
+    </script>
+</body>
+
+</html>
