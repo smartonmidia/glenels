@@ -132,19 +132,27 @@
 
     <script>
         (function() {
-            var FEED_URL = "https://g1.globo.com/dynamo/brasil/rss2.xml";
-            var PROXY = "https://api.allorigins.win/raw?url=";
-            var PLACEHOLDER = "https://via.placeholder.com/1920x1080?text=Notícia+sem+imagem";
+            const FEED_URL = "https://g1.globo.com/dynamo/brasil/rss2.xml";
+            const PROXY = "https://api.allorigins.win/raw?url="; // ideal: trocar por proxy próprio com cache
+            const PLACEHOLDER = "https://via.placeholder.com/1920x1080?text=Notícia+sem+imagem";
 
-            var feedEl = document.getElementById("feed");
-            var titleEl = document.getElementById("title");
-            var descEl = document.getElementById("description");
+            const feedEl = document.getElementById("feed");
+            const titleEl = document.getElementById("title");
+            const descEl = document.getElementById("description");
+
+            // mostra placeholder imediato para não ficar tela preta
+            function showPlaceholder() {
+                feedEl.style.backgroundImage = `url('${PLACEHOLDER}')`;
+                titleEl.textContent = "Carregando última notícia...";
+                descEl.textContent = "";
+            }
+            showPlaceholder();
 
             function cleanText(s) {
                 if (!s) return "";
                 try {
-                    var t = s.replace(/<[^>]*>/g, "");
-                    var ta = document.createElement("textarea");
+                    const t = s.replace(/<[^>]*>/g, "");
+                    const ta = document.createElement("textarea");
                     ta.innerHTML = t;
                     return (ta.value || "").trim();
                 } catch (e) {
@@ -154,146 +162,132 @@
 
             function extractImageFromItem(item) {
                 try {
-                    var media = item.getElementsByTagName("media:content")[0] || item.getElementsByTagName("content")[0];
-                    if (media && media.getAttribute && media.getAttribute("url")) {
-                        return media.getAttribute("url");
-                    }
-                    var enclosure = item.getElementsByTagName("enclosure")[0];
-                    if (enclosure && enclosure.getAttribute && enclosure.getAttribute("url")) {
-                        return enclosure.getAttribute("url");
-                    }
-                    var descEl = item.getElementsByTagName("description")[0];
-                    var desc = descEl && descEl.textContent ? descEl.textContent : (descEl && descEl.text ? descEl.text : "");
+                    const media = item.getElementsByTagName("media:content")[0] || item.getElementsByTagName("content")[0];
+                    if (media && media.getAttribute && media.getAttribute("url")) return media.getAttribute("url");
+                    const enclosure = item.getElementsByTagName("enclosure")[0];
+                    if (enclosure && enclosure.getAttribute && enclosure.getAttribute("url")) return enclosure.getAttribute("url");
+                    const descEl = item.getElementsByTagName("description")[0];
+                    const desc = descEl && descEl.textContent ? descEl.textContent : (descEl && descEl.text ? descEl.text : "");
                     if (desc) {
-                        var m = desc.match(/https?:\/\/[^"'<> ]+\.(jpg|jpeg|png|gif)(\?[^ "'<>]*)?/i);
+                        const m = desc.match(/https?:\/\/[^"'<> ]+\.(jpg|jpeg|png|gif)(\?[^ "'<>]*)?/i);
                         if (m) return m[0];
                     }
-                } catch (e) {
-                    return null;
-                }
+                } catch (e) { /* ignore */ }
                 return null;
             }
 
             function parseFeedXml(xmlText) {
-                var parser = new DOMParser();
-                var doc = parser.parseFromString(xmlText, "application/xml");
-                var items = doc.getElementsByTagName("item");
-                var arr = [];
-                for (var i = 0; i < items.length; i++) {
-                    var it = items[i];
-                    var tEl = it.getElementsByTagName("title")[0];
-                    var dEl = it.getElementsByTagName("description")[0];
-                    var title = tEl && tEl.textContent ? cleanText(tEl.textContent) : "";
-                    var desc = dEl && dEl.textContent ? cleanText(dEl.textContent) : "";
-                    var image = extractImageFromItem(it);
-                    if (image && /^https?:\/\//i.test(image)) {
-                        arr.push({
-                            title: title,
-                            description: desc,
-                            image: image
-                        });
-                    }
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(xmlText, "application/xml");
+                const items = doc.getElementsByTagName("item");
+                const arr = [];
+                for (let i = 0; i < items.length; i++) {
+                    const it = items[i];
+                    const tEl = it.getElementsByTagName("title")[0];
+                    const dEl = it.getElementsByTagName("description")[0];
+                    const title = tEl && tEl.textContent ? cleanText(tEl.textContent) : "";
+                    const desc = dEl && dEl.textContent ? cleanText(dEl.textContent) : "";
+                    const image = extractImageFromItem(it);
+                    arr.push({
+                        title,
+                        description: desc,
+                        image
+                    });
                 }
                 return arr;
             }
 
-            function xhrGet(url, cb) {
-                try {
-                    var xhr = new XMLHttpRequest();
-                    xhr.open("GET", url, true);
-                    xhr.onreadystatechange = function() {
-                        if (xhr.readyState === 4) {
-                            if (xhr.status >= 200 && xhr.status < 300) {
-                                cb(null, xhr.responseText);
-                            } else {
-                                cb(new Error("XHR status " + xhr.status));
-                            }
+            // fetch com timeout usando AbortController
+            function fetchWithTimeout(url, timeout = 3000) {
+                const controller = new AbortController();
+                const id = setTimeout(() => controller.abort(), timeout);
+                return fetch(url, {
+                        signal: controller.signal
+                    })
+                    .then(resp => {
+                        clearTimeout(id);
+                        if (!resp.ok) throw new Error("HTTP " + resp.status);
+                        return resp.text();
+                    });
+            }
+
+            // preload imagem com timeout (retorna true/false)
+            function preloadImageWithTimeout(url, timeout = 3000) {
+                return new Promise((resolve) => {
+                    if (!url) return resolve(false);
+                    const img = new Image();
+                    let done = false;
+                    const timer = setTimeout(() => {
+                        if (!done) {
+                            done = true;
+                            resolve(false);
+                        }
+                    }, timeout);
+                    img.onload = function() {
+                        if (!done) {
+                            done = true;
+                            clearTimeout(timer);
+                            resolve(true);
                         }
                     };
-                    xhr.send();
-                } catch (e) {
-                    cb(e);
-                }
+                    img.onerror = function() {
+                        if (!done) {
+                            done = true;
+                            clearTimeout(timer);
+                            resolve(false);
+                        }
+                    };
+                    img.src = url;
+                });
             }
 
-            function preloadImage(url, cb) {
-                var img = new Image();
-                var done = false;
-                var timer = setTimeout(function() {
-                    if (!done) {
-                        done = true;
-                        cb(false);
-                    }
-                }, 5000);
-                img.onload = function() {
-                    if (!done) {
-                        done = true;
-                        clearTimeout(timer);
-                        cb(true);
-                    }
-                };
-                img.onerror = function() {
-                    if (!done) {
-                        done = true;
-                        clearTimeout(timer);
-                        cb(false);
-                    }
-                };
-                img.src = url;
-            }
-
+            // atualiza UI sem bloquear
             function show(item) {
-                try {
-                    feedEl.style.opacity = "0.6";
-                    setTimeout(function() {
-                        feedEl.style.backgroundImage = "url('" + (item.image || PLACEHOLDER) + "')";
-                        titleEl.textContent = item.title || "";
-                        descEl.textContent = item.description || "";
-                        feedEl.style.opacity = "1";
-                    }, 150);
-                } catch (e) {
-                    feedEl.style.backgroundImage = "url('" + PLACEHOLDER + "')";
+                // efeito suave
+                feedEl.style.opacity = "0.8";
+                setTimeout(() => {
+                    feedEl.style.backgroundImage = `url('${item.image || PLACEHOLDER}')`;
                     titleEl.textContent = item.title || "";
                     descEl.textContent = item.description || "";
-                }
+                    feedEl.style.opacity = "1";
+                }, 80);
             }
 
+            // Lógica principal: tenta carregar feed, com fallback rápido
+            (async function loadFeed() {
+                try {
+                    const xmlText = await fetchWithTimeout(PROXY + encodeURIComponent(FEED_URL), 3000);
+                    const news = parseFeedXml(xmlText).filter(n => !!n.title);
+                    if (!news || news.length === 0) {
+                        titleEl.textContent = "Nenhuma notícia com imagem encontrada";
+                        descEl.textContent = "Tente novamente mais tarde.";
+                        return;
+                    }
 
+                    // pega próximo índice (rotaciona)
+                    const lastIndex = parseInt(localStorage.getItem("lastNewsIndex") || "0", 10);
+                    const idx = (lastIndex + 1) % news.length;
 
-            // ---- Lógica principal ----
-            xhrGet(PROXY + encodeURIComponent(FEED_URL), function(err, xmlText) {
-                if (err || !xmlText) {
-                    titleEl.textContent = "Nenhuma notícia disponível";
-                    descEl.textContent = "Erro ao carregar notícias.";
-                    feedEl.style.backgroundImage = "url('" + PLACEHOLDER + "')";
-                    return;
-                }
-
-                var news = parseFeedXml(xmlText);
-                if (!news || news.length === 0) {
-                    titleEl.textContent = "Nenhuma notícia com imagem encontrada";
-                    descEl.textContent = "Tente novamente mais tarde.";
-                    feedEl.style.backgroundImage = "url('" + PLACEHOLDER + "')";
-                    return;
-                }
-
-                // Recupera último índice exibido do armazenamento local
-                var lastIndex = parseInt(localStorage.getItem("lastNewsIndex") || "0", 10);
-                var idx = (lastIndex + 1) % news.length; // próxima notícia
-
-                // Exibe e salva o índice atual
-                preloadImage(news[idx].image, function(ok) {
+                    // tenta pré-carregar imagem com timeout curto
+                    const ok = await preloadImageWithTimeout(news[idx].image, 3000);
                     show(ok ? news[idx] : {
                         title: news[idx].title,
                         description: news[idx].description,
                         image: PLACEHOLDER
                     });
                     localStorage.setItem("lastNewsIndex", idx);
-                });
-            });
+                } catch (err) {
+                    // fallback rápido: placeholder + mensagem
+                    titleEl.textContent = "Erro ao carregar notícias";
+                    descEl.textContent = "Verifique conexão ou tente novamente mais tarde.";
+                    feedEl.style.backgroundImage = `url('${PLACEHOLDER}')`;
+                    console.warn("Feed load error:", err);
+                }
+            })();
 
         })();
     </script>
+
 </body>
 
 </html>
